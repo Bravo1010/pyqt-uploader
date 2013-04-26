@@ -32,7 +32,6 @@ import os
 import sys
 import urllib
 import socket
-import optparse
 import tempfile
 import mimetypes
 
@@ -50,6 +49,7 @@ except:
 # Globals
 ################################################################################
 DEFAULT_COL_WIDTHS = "44,406,64,274,274"
+
 
 ################################################################################
 # Model
@@ -134,8 +134,9 @@ class ShotgunFileModel(QtCore.QAbstractTableModel):
             if data.hasUrls():
                 files = [str(url.toLocalFile()) for url in data.urls()]
             elif data.hasText():
-                files = [str(urllib.urlretrieve(uri)[0]) for uri in str(data.text()).split() \
-                                                        if urllib.splittype(uri)[0] == 'file']
+                files = [str(urllib.urlretrieve(uri)[0])
+                    for uri in str(data.text()).split()
+                    if urllib.splittype(uri)[0] == 'file']
             # Just let people know what's been added
             self.emit(QtCore.SIGNAL('filesAdded(QStringList)'), files)
             return True
@@ -146,9 +147,7 @@ class ShotgunFileModel(QtCore.QAbstractTableModel):
         """update internal data at (row, column) to value"""
         f = self.files[row]
         setattr(f, self.__HEADERS[column]['attr'], str(value))
-        index = self.index(row, column)
         self.emit(QtCore.SIGNAL('modelReset()'))
-        # self.emit(QtCore.SIGNAL('dataChanged(index, index)'), index, index)
 
     def clear(self):
         self.files = []
@@ -169,6 +168,7 @@ class ShotgunFileModel(QtCore.QAbstractTableModel):
         self.endRemoveRows()
         self.emit(QtCore.SIGNAL('modelReset()'))
 
+
 ################################################################################
 # File Object
 ################################################################################
@@ -188,6 +188,7 @@ class ShotgunFile(object):
                 self.hero_offset = '1'
         self.size = os.path.getsize(path)
 
+
 ################################################################################
 # Commands
 ################################################################################
@@ -206,6 +207,7 @@ class ChangeValueCommand(QtGui.QUndoCommand):
     def undo(self):
         self.__model._update_data(self.__row, self.__col, self.__old)
 
+
 ################################################################################
 class NewFileCommand(QtGui.QUndoCommand):
     def __init__(self, model, files, text='new files', parent=None):
@@ -220,6 +222,7 @@ class NewFileCommand(QtGui.QUndoCommand):
 
     def undo(self):
         self.model.delete_files(self.first, self.last)
+
 
 ################################################################################
 class DeleteFilesCommand(QtGui.QUndoCommand):
@@ -238,6 +241,7 @@ class DeleteFilesCommand(QtGui.QUndoCommand):
         # make sure we do this in row order to keep things as they were
         for row in sorted(self.files.keys()):
             self.model.insert_files([self.files[row]], row)
+
 
 ################################################################################
 # Prefereneces
@@ -292,7 +296,9 @@ class PrefsDialog(QtGui.QDialog):
 
     def cancel(self):
         # always save geometry.  don't care about the other settings
+        settings = QtCore.QSettings('ShotgunSharing', 'uploader')
         settings.setValue("prefs/geometry", self.saveGeometry())
+
 
 ################################################################################
 # Main Window
@@ -314,6 +320,8 @@ class Uploader(QtGui.QMainWindow):
         # setup model
         self.model = ShotgunFileModel(self.stack, self.gui.file_table_view)
         self.gui.file_table_view.setModel(self.model)
+        self.gui.file_table_view.viewport().setAcceptDrops(True)
+        self.gui.file_table_view.setDropIndicatorShown(True)
         # connect up signals
         self.connect(self.gui.buttons, QtCore.SIGNAL('accepted()'), self.ok)
         self.connect(self.gui.buttons, QtCore.SIGNAL('rejected()'), self.close_window)
@@ -356,14 +364,25 @@ class Uploader(QtGui.QMainWindow):
                 sys.path.append(self.prefs.shotgun_api)
             else:
                 sys.path.append(os.path.dirname(self.prefs.shotgun_api))
-            import shotgun_api3_preview as sg
+            import shotgun_api3 as sg
         except ImportError:
             sys.path.pop()
             QtGui.QMessageBox.critical(self, self.tr("uploader"),
                 self.tr("shotgun_api3_preview module not found.  Update your Preferences."),
                 QtGui.QMessageBox.Ok)
             return None
-        conn = sg.Shotgun(self.prefs.shotgun_url, self.prefs.shotgun_script, self.prefs.shotgun_key)
+
+        # try to connect to shotgun
+        try:
+            conn = sg.Shotgun(self.prefs.shotgun_url, self.prefs.shotgun_script, self.prefs.shotgun_key)
+            # verify with a simple fine
+            conn.find_one('Project', [])
+        except Exception, e:
+            QtGui.QMessageBox.critical(self, self.tr("uploader"),
+                self.tr("Could not connect to shotgun:\n\n%s.\n\nUpdate your Preferences." % e.message),
+                QtGui.QMessageBox.Ok)
+            return None
+
         # validate connection by seeing if Attachments are accessible
         try:
             # use path_field to validate that is set right, if it is set
@@ -375,24 +394,10 @@ class Uploader(QtGui.QMainWindow):
                 QtGui.QMessageBox.Ok)
             return None
         except sg.Fault, e:
-            if e.faultCode == 102:
-                # raised if authentication prefs aren't right
-                QtGui.QMessageBox.critical(self, self.tr("uploader"),
-                    self.tr("cannot authenticate shotgun script.  Update your Preferences."),
-                    QtGui.QMessageBox.Ok)
-                return None
-            if e.faultCode == 103:
-                # raised if Attachments aren't available
-                if 'Valid entity types' in e.faultString:
-                    QtGui.QMessageBox.critical(self, self.tr("uploader"),
-                        self.tr("cannot work with Files through the API.  Ask the shotgun guys to turn that on for you."),
-                        QtGui.QMessageBox.Ok)
-                    # exit on this one... no pref changes are going to help
-                    sys.exit(1)
-                # otherwise it is a field lookup failuer on path_field
-                QtGui.QMessageBox.warning(self, self.tr("uploader"),
-                    self.tr("Attachment has no field '%s'.  Update your Preferences." % self.prefs.path_field),
-                    QtGui.QMessageBox.Ok)
+            QtGui.QMessageBox.critical(self, self.tr("uploader"),
+                self.tr("Cannot get path field:\n%s.\n\nUpdate your Preferences." % e.message),
+                QtGui.QMessageBox.Ok)
+
         if conn:
             # got a conn.  get sync'ed up with it
             self.__conn = conn
@@ -447,7 +452,7 @@ class Uploader(QtGui.QMainWindow):
         matches = self.__conn.find(link_type, filters, ['display_name', 'content', 'name', 'code', 'sg_sequence', 'sg_asset_type'])
         texts = ['']
         self.gui.link_name.addItem('', 0)
-        if matches and matches[0].has_key('sg_sequence'):
+        if matches and ('sg_sequence' in matches[0]):
             # going to need sequences
             seqs = self.__conn.find('Sequence', filters, ['code'])
             seq_map = dict([(s['id'], s['code']) for s in seqs])
@@ -459,10 +464,10 @@ class Uploader(QtGui.QMainWindow):
                 # just in case the entity type has no field we know about as a
                 # useful name
                 break
-            if match.has_key('sg_sequence'):
+            if 'sg_sequence' in match:
                 # display the sequence if we've got it
                 text = text + " (%s)" % (match['sg_sequence'] and seq_map[match['sg_sequence']['id']] or 'None')
-            elif match.has_key('sg_asset_type'):
+            elif 'sg_asset_type' in match:
                 # display the asset type if we've got it
                 text = text + " (%s)" % match['sg_asset_type']
             self.gui.link_name.addItem(text, match['id'])
@@ -492,7 +497,6 @@ class Uploader(QtGui.QMainWindow):
             tags = str(self.gui.tags.text())
             files = []
             project = int(self.gui.project.itemData(self.gui.project.currentIndex()).toInt()[0])
-            project_text = str(self.gui.project.currentText())
             skipped_fnames = []
             for fname in [str(f) for f in fnames]:
                 if str(self.gui.link_name.currentText()):
@@ -526,6 +530,7 @@ class Uploader(QtGui.QMainWindow):
     # Pattern - find an odd # of $ which doesn't have a $ before it
     #   then match {pattern} or pattern, keep pattern in the match group 'name'
     __PATTERN_RE = re.compile(r'(?<!\$)\$(\$\$)*{?(?P<name>[_a-z][_a-z0-9.]*)}?')
+
     def __link_for_file(self, fname, warn=False):
         try:
             import shotgun_api3_preview as sg
@@ -538,6 +543,7 @@ class Uploader(QtGui.QMainWindow):
                     re_match = re_match.replace('?', '.{1}')
                     re_match = re_match.replace('*', '[^%s]+' % os.sep)
                     name_map = {}
+
                     def track_names(match):
                         """map temp group names to the pattern they are generated for"""
                         pat = '(?P<name%s>[^%s]+)' % (len(name_map), os.sep)
@@ -593,7 +599,7 @@ class Uploader(QtGui.QMainWindow):
         prog = QtGui.QProgressDialog()
         # guess that progress will progress along with bytes uploaded
         maximum = sum([f.size for f in self.model.files])
-        nfiles = len (self.model.files)
+        nfiles = len(self.model.files)
         prog.setMaximum(maximum)
         prog.setLabelText("%-80s" % "Uploading %d/%d: %s" % (0, nfiles, ''))
         prog.setValue(0)
@@ -628,7 +634,7 @@ class Uploader(QtGui.QMainWindow):
                         cmd = self.prefs.movie_command
                     if cmd is not None:
                         # do the replacements for the command and run it
-                        cmd = cmd.replace('$in', '"%s"'% f.path)
+                        cmd = cmd.replace('$in', '"%s"' % f.path)
                         cmd = cmd.replace('$out', '"%s"' % tmp)
                         cmd = cmd.replace('$offset', '"%s"' % f.hero_offset)
                         os.system(cmd)
@@ -641,7 +647,7 @@ class Uploader(QtGui.QMainWindow):
                         os.remove(tmp)
             if f.note:
                 # add the note if set
-                conn.create('Note', {'content': f.note, 'note_links': [{'type': 'Attachment', 'id': f_id}], \
+                conn.create('Note', {'content': f.note, 'note_links': [{'type': 'Attachment', 'id': f_id}],
                     'project': f.link.get('project', f.link)})
             # update progress
             prog.setValue(prog.value()+f.size)
@@ -660,8 +666,7 @@ class Uploader(QtGui.QMainWindow):
         settings.setValue("main/project", QtCore.QVariant(self.gui.project.currentText()))
         settings.setValue("main/link_type", QtCore.QVariant(self.gui.link_type.currentText()))
         settings.setValue("main/geometry", self.saveGeometry())
-        col_widths = ','.join([str(self.gui.file_table_view.columnWidth(i)) \
-                                for i in xrange(self.model.columnCount())])
+        col_widths = ','.join([str(self.gui.file_table_view.columnWidth(i)) for i in xrange(self.model.columnCount())])
         settings.setValue("main/col_widths", QtCore.QVariant(col_widths))
         # shut down
         self.close()
@@ -676,6 +681,7 @@ class Uploader(QtGui.QMainWindow):
 # WARNING! All changes made in this file will be lost!
 
 from PyQt4 import QtCore, QtGui
+
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
