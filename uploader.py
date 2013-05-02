@@ -32,6 +32,7 @@ import os
 import sys
 import urllib
 import socket
+import getpass
 import tempfile
 import mimetypes
 
@@ -431,7 +432,7 @@ class Uploader(QtGui.QMainWindow):
             self.gui.link_type.setCompleter(completer)
             self.gui.link_type.setValidator(QtGui.QRegExpValidator(QtCore.QRegExp('|'.join(link_types), QtCore.Qt.CaseInsensitive), self))
             # default used to update reference to
-            self.default_link = conn.find_one('HumanUser', [['login', 'is', os.getlogin()]], ['name'])
+            self.default_link = conn.find_one('HumanUser', [['login', 'is', getpass.getuser()]], ['name'])
             return conn
         return None
 
